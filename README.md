@@ -1,135 +1,150 @@
 # Pulse-Check-API ("Watchdog" Sentinel)
-This challenge is designed to test your ability to bridge Computer Science fundamentals with Modern Backend Engineering.
 
-## 1. Business Context
-> **Client:** *CritMon Servers Inc.* (A Critical Infrastructure Monitoring Company).
-
-### The Problem
-CritMon provides monitoring for remote solar farms and unmanned weather stations in areas with poor connectivity. These devices are supposed to send "I'm alive" signals every hour.
-
-Currently, CritMon has no way of knowing if a device has gone offline (due to power failure or theft) until a human manually checks the logs. They need a system that alerts *them* when a device *stops* talking.
-
-### The Solution
-You need to build a **Dead Man’s Switch API**. Devices will register a "monitor" with a countdown timer (e.g., 60 seconds). If the device fails to "ping" (send a heartbeat) to the API before the timer runs out, the system automatically triggers an alert.
+Pulse-Check-API is a Dead Man's Switch backend service that tracks remote devices (e.g. solar farms, weather stations). If a device fails to report its heartbeat before its countdown timer reaches zero, the system automatically marks it as `down` and fires a critical alert.
 
 ---
 
-## 2. Technical Objective
-Build a backend service that manages stateful timers.
+## 1. Architecture Diagram
 
-* **Registration:** Allow a client to create a monitor with a specific timeout duration.
-* **Heartbeat:** Reset the countdown when a ping is received.
-* **Trigger:** Fire a webhook (or log a critical error) if the countdown reaches zero.
+The system uses a persistent PostgreSQL database for monitor state and metadata, and Python's `asyncio` loop to run light-weight, stateful countdown timers in memory. Active timers are automatically rescheduled on application startup, guaranteeing resilience across server restarts.
 
 
----
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as Device / Admin
+    participant API as FastAPI App
+    participant EventLoop as asyncio Event Loop
+    participant DB as PostgreSQL DB
+    participant Alert as Alerting System (Stdout)
 
-## 3. Getting Started
+    rect rgb(240, 248, 255)
+        note right of Client: Flow 1: Register Monitor
+        Client->>API: POST /monitor (id, timeout, email)
+        API->>DB: Save/Update Monitor (Status: ACTIVE, expires_at: NOW + timeout)
+        API->>EventLoop: asyncio.create_task(start_countdown(id, timeout))
+        API-->>Client: 201 Created
+    end
 
-1.  **Fork this Repository:** Do not clone it directly. Create a fork to your own GitHub account.
-2.  **Environment:** You may use **Node.js, Python, Java or Go, etc.**.
-3.  **Submission:** Your final submission will be a link to your forked repository containing:
-    * The source code.
-    * The **Architecture Diagram**
-    * The `README.md` with documentation.
+    rect rgb(245, 245, 245)
+        note right of Client: Flow 2: Send Heartbeat (Reset)
+        Client->>API: POST /monitors/{id}/heartbeat
+        API->>DB: Update Monitor (Status: ACTIVE, expires_at: NOW + timeout)
+        API->>EventLoop: Cancel previous task & start new countdown task
+        API-->>Client: 200 OK
+    end
 
----
+    rect rgb(255, 240, 245)
+        note right of EventLoop: Flow 3: Timeout Expiration (No Heartbeat)
+        EventLoop->>EventLoop: Sleep completes (timeout seconds)
+        EventLoop->>DB: Query current status and expires_at
+        alt Monitor is ACTIVE and expired
+            EventLoop->>DB: Update Status to DOWN
+            EventLoop->>Alert: Print JSON Alert {"ALERT": "...", "time": "..."}
+        end
+    end
 
-## 4. The Architecture Diagram 
-**Task:** Before you write any code, you must design the logic flow.
-**Deliverable:** A **Sequence Diagram** or **State Flowchart** embedded in your `README.md`.
-
----
-
-## 5. User Stories & Acceptance Criteria
-
-### User Story 1: Registering a Monitor
-**As a** device administrator,  
-**I want to** create a new monitor for my device,  
-**So that** the system knows to track its status.
-
-**Acceptance Criteria:**
-- [ ] The API accepts a `POST /monitors` request.
-- [ ] Input: `{"id": "device-123", "timeout": 60, "alert_email": "admin@critmon.com"}`.
-- [ ] The system starts a countdown timer for 60 seconds associated with `device-123`.
-- [ ] Response: `201 Created` with a confirmation message.
-
-### User Story 2: The Heartbeat (Reset)
-**As a** remote device,  
-**I want to** send a signal to the server,  
-**So that** my timer is reset and no alert is sent.
-
-**Acceptance Criteria:**
-- [ ] The API accepts a `POST /monitors/{id}/heartbeat` request.
-- [ ] If the ID exists and the timer has NOT expired:
-    - [ ] Restart the countdown from the beginning (e.g., reset to 60 seconds).
-    - [ ] Return `200 OK`.
-- [ ] If the ID does not exist:
-    - [ ] Return `404 Not Found`.
-
-### User Story 3: The Alert (Failure State)
-**As a** support engineer,  
-**I want to** be notified immediately if a device stops sending heartbeats,  
-**So that** I can deploy a repair team.
-
-**Acceptance Criteria:**
-- [ ] If the timer for `device-123` reaches 0 seconds (no heartbeat received):
-    - [ ] The system must internally "fire" an alert.
-    - [ ] **Implementation:** For this project, simply `console.log` a JSON object: `{"ALERT": "Device device-123 is down!", "time": <timestamp>}`. (Or simulate sending an email).
-    - [ ] The monitor status changes to `down`.
+    rect rgb(240, 255, 240)
+        note right of Client: Flow 4: Pause Monitoring
+        Client->>API: POST /monitors/{id}/pause
+        API->>DB: Update Monitor (Status: PAUSED)
+        API->>EventLoop: Cancel active countdown task
+        API-->>Client: 200 OK
+    end
+```
 
 ---
 
-## 6. Bonus User Story (The "Snooze" Button)
-**As a** maintenance technician,  
-**I want to** pause monitoring while I am repairing a device,  
-**So that** I don't trigger false alarms.
+## 2. Setup & Installation
 
-**Acceptance Criteria:**
-- [ ] Create a `POST /monitors/{id}/pause` endpoint.
-- [ ] When called, the timer stops completely. No alerts will fire.
-- [ ] Calling the heartbeat endpoint again automatically "un-pauses" the monitor and restarts the timer.
+### Prerequisites
+- Python 3.10+
+- PostgreSQL database running locally
+
+### Installation Steps
+
+1. **Clone/Download the repository** and navigate to the project directory:
+   ```bash
+   cd Pulse-Check-API
+   ```
+
+2. **Activate the Virtual Environment**:
+   * Windows (CMD/PowerShell):
+     ```powershell
+     source env/Scripts/activate
+     ```
+   * macOS/Linux:
+     ```bash
+     source env/bin/activate
+     ```
+
+3. **Install Dependencies** (if not already cached in `env`):
+   ```bash
+   pip install fastapi uvicorn sqlalchemy psycopg2 pydantic
+   ```
+
+4. **Database Configuration**:
+   Create a database named `pulse-api` in your local PostgreSQL. Update the connection string in `app/database.py` if necessary:
+   ```python
+   SQLALCHEMY_DATABASE_URL = "postgresql://postgres:<password>@localhost/pulse-api"
+   ```
+
+5. **Start the Application**:
+   ```bash
+   fastapi dev app/main.py
+   ```
+   The application will automatically initialize the database schema on startup and bind to `http://127.0.0.1:8000`.
+
+---
+
+## 3. API Documentation
+
+### 1. Register a Monitor
+Create or update a monitor timer for a device.
+- **Endpoint**: `POST /monitor`
+- **Content-Type**: `application/json`
+- **Request Body**:
+  ```json
+  {
+    "id": "device-123",
+    "timeout": 60,
+    "alert_email": "admin@critmon.com"
+  }
+  ```
+- **Response**: `201 Created`
+
+### 2. Heartbeat (Reset Countdown)
+Restart the countdown timer for an active or paused monitor.
+- **Endpoint**: `POST /monitors/{id}/heartbeat`
+- **Response**: `200 OK` (or `404 Not Found` if the device is unregistered)
+
+### 3. Pause Monitor (Snooze)
+Pause the monitoring timer completely. Heartbeats will not be expected and no alerts will fire. Sending a heartbeat later will un-pause it.
+- **Endpoint**: `POST /monitors/{id}/pause`
+- **Response**: `200 OK` (or `404 Not Found` if the device is unregistered)
+
+### 4. Get All Monitors (Developer's Choice)
+List all registered monitors, their current status (`active`, `down`, `paused`), and configuration.
+- **Endpoint**: `GET /monitors`
+- **Response**: `200 OK`
+  ```json
+  {
+    "data": [
+      {
+        "id": "device-123",
+        "timeout": 60,
+        "alert_email": "admin@critmon.com",
+        "status": "active",
+        "expires_at": "2026-06-17T10:00:00Z"
+      }
+    ]
+  }
+  ```
 
 ---
 
-## 7. The "Developer's Choice" Challenge
-We value engineers who look for "what's missing."
+## 4. The Developer's Choice
 
-**Task:** Identify **one** additional feature that makes this system more robust or user-friendly.
-1.  **Implement it.**
-2.  **Document it:** Explain *why* you added it in your README.
-
----
-
-## 8. Documentation Requirements
-Your final `README.md` must replace these instructions. It must cover:
-
-1.  **Architecture Diagram** 
-2.  **Setup Instructions** 
-3.  **API Documentation** 
-4.  **The Developer's Choice:** Explanation of your added feature.
-
----
-Submit your repo link via the [online](https://forms.office.com/e/rGKtfeZCsH) form.
-
-## 🛑 Pre-Submission Checklist
-**WARNING:** Before you submit your solution, you **MUST** pass every item on this list.
-If you miss any of these critical steps, your submission will be **automatically rejected** and you will **NOT** be invited to an interview.
-
-### 1. 📂 Repository & Code
-- [ ] **Public Access:** Is your GitHub repository set to **Public**? (We cannot review private repos).
-- [ ] **Clean Code:** Did you remove unnecessary files (like `node_modules`, `.env` with real keys, or `.DS_Store`)?
-- [ ] **Run Check:** if we clone your repo and run `npm start` (or equivalent), does the server start immediately without crashing?
-
-### 2. 📄 Documentation (Crucial)
-- [ ] **Architecture Diagram:** Did you include a visual Diagram (Flowchart or Sequence Diagram) in the README?
-- [ ] **README Swap:** Did you **DELETE** the original instructions (the problem brief) from this file and replace it with your own documentation?
-- [ ] **API Docs:** Is there a clear list of Endpoints and Example Requests in the README?
-
-
-### 3. 🧹 Git Hygiene
-- [ ] **Commit History:** Does your repo have multiple commits with meaningful messages? (A single "Initial Commit" is a red flag).
-
----
-**Ready?**
-If you checked all the boxes above, submit your repository link in the application form. Good luck! 🚀
+### Active Timer Persistence & Restart Recovery
+- **The Problem**: A common flaw in stateful in-memory architectures is server restarts. If the server crashes or reloads, all running memory countdowns (like `asyncio.sleep` tasks) are lost, resulting in monitors never firing their alerts.
+- **The Solution**: On application startup (via the `@app.on_event("startup")` hook), our system queries the database for all `active` monitors, calculates their remaining countdown duration (`expires_at - current_time`), and reschedules the `asyncio` timers dynamically. If a monitor expired while the server was offline, the alert fires immediately on boot.
