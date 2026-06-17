@@ -7,7 +7,7 @@ sequenceDiagram
     autonumber
     actor Client as Device / Admin
     participant API as FastAPI App
-    participant Loop as asyncio Event Loop
+    participant EventLoop as asyncio Event Loop
     participant DB as PostgreSQL DB
     participant Alert as Alerting System (Stdout)
 
@@ -15,7 +15,7 @@ sequenceDiagram
         note right of Client: Flow 1: Register Monitor
         Client->>API: POST /monitor (id, timeout, email)
         API->>DB: Save/Update Monitor (Status: ACTIVE, expires_at: NOW + timeout)
-        API->>Loop: asyncio.create_task(start_countdown(id, timeout))
+        API->>EventLoop: asyncio.create_task(start_countdown(id, timeout))
         API-->>Client: 201 Created
     end
 
@@ -23,17 +23,17 @@ sequenceDiagram
         note right of Client: Flow 2: Send Heartbeat (Reset)
         Client->>API: POST /monitors/{id}/heartbeat
         API->>DB: Update Monitor (Status: ACTIVE, expires_at: NOW + timeout)
-        API->>Loop: Cancel previous task & start new countdown task
+        API->>EventLoop: Cancel previous task & start new countdown task
         API-->>Client: 200 OK
     end
 
     rect rgb(255, 240, 245)
-        note right of Loop: Flow 3: Timeout Expiration (No Heartbeat)
-        Loop->>Loop: Sleep completes (timeout seconds)
-        Loop->>DB: Query current status and expires_at
+        note right of EventLoop: Flow 3: Timeout Expiration (No Heartbeat)
+        EventLoop->>EventLoop: Sleep completes (timeout seconds)
+        EventLoop->>DB: Query current status and expires_at
         alt Monitor is ACTIVE and expired
-            Loop->>DB: Update Status to DOWN
-            Loop->>Alert: Print JSON Alert {"ALERT": "...", "time": "..."}
+            EventLoop->>DB: Update Status to DOWN
+            EventLoop->>Alert: Print JSON Alert {"ALERT": "...", "time": "..."}
         end
     end
 
@@ -41,7 +41,7 @@ sequenceDiagram
         note right of Client: Flow 4: Pause Monitoring
         Client->>API: POST /monitors/{id}/pause
         API->>DB: Update Monitor (Status: PAUSED)
-        API->>Loop: Cancel active countdown task
+        API->>EventLoop: Cancel active countdown task
         API-->>Client: 200 OK
     end
 ```
