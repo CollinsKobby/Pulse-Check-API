@@ -141,6 +141,11 @@ List all registered monitors, their current status (`active`, `down`, `paused`),
   }
   ```
 
+### 5. Interactive API Documentation (Auto Docs)
+When the application is running, you can access the automatically generated interactive API documentation to view schemas and test the endpoints directly from your browser:
+- **Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **ReDoc**: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
+
 ---
 
 ## 4. The Developer's Choice
