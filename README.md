@@ -129,7 +129,7 @@ List all registered monitors, their current status (`active`, `down`, `paused`),
 - **Response**: `200 OK`
   ```json
   {
-    "data": [
+    "Monitors": [
       {
         "id": "device-123",
         "timeout": 60,
